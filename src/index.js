@@ -7,9 +7,8 @@ const os = require('node:os');
 const fs = require('node:fs');
 
 class DopplerSecretsPlugin {
-  constructor(serverless, options) {
+  constructor(serverless) {
     this.serverless = serverless;
-    this.options = options || {};
     this.getDopplerSecretsPromise = null;
 
     this.getDopplerSecrets = this.getDopplerSecrets.bind(this);
@@ -23,12 +22,13 @@ class DopplerSecretsPlugin {
       },
     };
 
-    serverless.configSchemaHandler.defineTopLevelProperty('doppler', {
+    this.serverless.configSchemaHandler.defineTopLevelProperty('doppler', {
       type: 'object',
       properties: {
         token: { type: 'string' },
         project: { type: 'string' },
         config: { type: 'string' },
+        localFallback: { type: 'boolean' },
         stages: {
           type: 'object',
           additionalProperties: {
@@ -37,6 +37,7 @@ class DopplerSecretsPlugin {
               token: { type: 'string' },
               project: { type: 'string' },
               config: { type: 'string' },
+              localFallback: { type: 'boolean' },
             },
           },
         },
@@ -70,13 +71,24 @@ class DopplerSecretsPlugin {
         this.serverless.configurationInput.doppler?.stages?.[stage]?.config ??
         this.serverless.configurationInput.doppler?.config;
 
+      // TODO: convert string to boolean
+      let localFallback =
+        cliParams['doppler-local-fallback'] ??
+        this.serverless.configurationInput.doppler?.stages?.[stage]?.localFallback ??
+        this.serverless.configurationInput.doppler?.localFallback;
+
       debug('Resolving Doppler secrets');
       debug('stage: %s', stage);
       debug('accessToken: %s', accessToken);
       debug('projectId: %s', projectId);
       debug('configId: %s"', configId);
 
-      this.getDopplerSecretsPromise = this.getDopplerSecrets(accessToken, projectId, configId);
+      this.getDopplerSecretsPromise = this.getDopplerSecrets({
+        accessToken,
+        projectId,
+        configId,
+        localFallback,
+      });
     }
 
     const secrets = await this.getDopplerSecretsPromise;
@@ -90,19 +102,12 @@ class DopplerSecretsPlugin {
     };
   }
 
-  async getDopplerSecrets(accessToken, projectId, configId) {
+  async getDopplerSecrets({ accessToken, projectId, configId, localFallback } = {}) {
+    const localSettings = await this.getLocalDopplerSettings();
+
+    accessToken ??= localFallback ? localSettings.accessToken : undefined;
     if (!accessToken) {
-      debug('No Doppler access token provided, attempting to use local CLI Doppler settings');
-
-      const localSettings = await this.getLocalDopplerSettings();
-
-      if (!localSettings?.accessToken) {
-        throw new Error(
-          'no doppler access token provided and local doppler cli not configured for project',
-        );
-      }
-
-      accessToken = localSettings.accessToken;
+      throw new Error('missing doppler access token');
     }
 
     const doppler = new DopplerSDK({ accessToken });
@@ -126,21 +131,16 @@ class DopplerSecretsPlugin {
         throw new Error('multiple doppler configs associated with service token');
       }
 
-      if (projectId && projectId !== pid) {
-        throw new Error('service token corresponds to a different doppler project than specified');
-      }
-      if (configId && configId !== cid) {
-        throw new Error('service token corresponds to a different doppler config than specified');
-      }
-
       projectId = pid;
       configId = cid;
     }
 
+    projectId ??= localFallback ? localSettings.projectId : undefined;
     if (!projectId) {
       throw new Error('missing doppler project');
     }
 
+    configId ??= localFallback ? localSettings.configId : undefined;
     if (!configId) {
       throw new Error('missing doppler config');
     }
@@ -168,7 +168,7 @@ class DopplerSecretsPlugin {
     const dopplerConfigPath = join(os.homedir(), '.doppler', '.doppler.yaml');
 
     if (!fs.existsSync(dopplerConfigPath)) {
-      throw new Error(`no local doppler config. (no file at "${dopplerConfigPath}")`);
+      return {};
     }
 
     const dopplerConfig = parseYaml(fs.readFileSync(dopplerConfigPath).toString());
@@ -189,12 +189,21 @@ class DopplerSecretsPlugin {
       c => c?.['enclave.config'],
     );
 
-    let encodedToken = await getPassword('doppler-cli', keychainAccount);
-    encodedToken = encodedToken.replace('go-keyring-encoded:', '');
+    let accessToken = undefined;
 
-    const accessToken = Buffer.from(encodedToken, 'hex').toString('utf8');
+    if (keychainAccount) {
+      let encodedToken = await getPassword('doppler-cli', keychainAccount);
+      encodedToken = encodedToken?.replace('go-keyring-encoded:', '');
+      if (encodedToken) {
+        accessToken = Buffer.from(encodedToken, 'hex').toString('utf8');
+      }
+    }
 
-    return { accessToken, projectId, configId };
+    return {
+      accessToken,
+      projectId: projectId || undefined,
+      configId: configId || undefined,
+    };
 
     function getScopedValue(scopes, path, selector) {
       while (true) {
