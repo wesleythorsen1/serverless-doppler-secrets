@@ -1,0 +1,43 @@
+{
+  "name": "serverless-doppler-secrets",
+  "description": "A Serverless plugin for injecting Doppler secrets.",
+  "author": "Wesley Thorsen",
+  "version": "0.1.0",
+  "main": "./src/index.js",
+  "keywords": [
+    "serverless",
+    "serverless plugin",
+    "doppler",
+    "secrets",
+    "aws lambda"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wesleythorsen1/serverless-doppler-secrets.git"
+  },
+  "files": [
+    "src",
+    "package.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=10.0"
+  },
+  "scripts": {
+    "publish": "release-it"
+  },
+  "dependencies": {
+    "@dopplerhq/node-sdk": "^1.3.0",
+    "debug": "^4.3.7",
+    "keytar": "^7.9.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "release-it": "^17.10.0"
+  },
+  "peerDependencies": {
+    "serverless": "2 || 3"
+  }
+}
